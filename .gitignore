@@ -1,0 +1,28 @@
+# STM32CubeIDE generated build output
+Debug/
+Release/
+
+# Generic embedded build artifacts
+*.o
+*.d
+*.su
+*.cyclo
+*.elf
+*.hex
+*.bin
+*.map
+*.list
+*.a
+
+# Local IDE and workspace files
+.metadata/
+.vscode/
+.idea/
+*.launch
+
+# OS / patch leftovers
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.orig
+*.rej
