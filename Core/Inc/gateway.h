@@ -15,10 +15,33 @@ extern "C" {
 #include "mcp2515.h"
 #endif
 
-#define GATEWAY_CAN_QUEUE_SIZE 32U
+#define GATEWAY_CAN_QUEUE_SIZE 256U
 #define CAN1_FILTER_BANK_START 0U
 #define CAN2_FILTER_BANK_START 14U
 #define ECHO_IGNORE_WINDOW_MS 4U
+
+/* Bus roles:
+ * - CAN1: ctrl_c/debugger side into the gateway
+ * - CAN2: gateway out to the vehicle/control-module side as the MITM path
+ * - CAN3/MCP2515: CAN_HMI accessor used for ESP-frame snooping/injection only */
+
+/* Bus-off events increment the busoff_count counters, then notifications
+ * are re-armed.  Hardware auto-recovery is handled by AutoBusOff=ENABLE. */
+
+/* Milliseconds of CAN bus silence before auto-sleep is requested.
+ * Set to 0 to disable the idle-sleep feature entirely. */
+#define GATEWAY_BUS_IDLE_TIMEOUT_MS  0U
+#define GATEWAY_RX_GAP_TIMEOUT_MS    300U
+
+/* How often (ms) the MCP2515 EFLG register is polled for bus-off/errors. */
+#define GATEWAY_MCP2515_CHECK_MS     100U
+
+typedef enum
+{
+  GATEWAY_BUS_CAN1 = 0,
+  GATEWAY_BUS_CAN2,
+  GATEWAY_BUS_CAN3
+} GatewayBus;
 
 typedef struct
 {
@@ -32,25 +55,66 @@ typedef struct
   uint32_t can2_last_activity;
   volatile uint32_t can1_tx_complete_count;
   volatile uint32_t can2_tx_complete_count;
+  volatile uint32_t can1_tx_submit_ok_count;
+  volatile uint32_t can2_tx_submit_ok_count;
+  volatile uint32_t can1_tx_mailbox_full_count;
+  volatile uint32_t can2_tx_mailbox_full_count;
   volatile uint32_t can1_error_flags;
   volatile uint32_t can2_error_flags;
+  volatile uint32_t can1_error_count;
+  volatile uint32_t can2_error_count;
   volatile uint32_t can1_rx_dropped;
   volatile uint32_t can2_rx_dropped;
   volatile uint32_t can1_tx_dropped;
   volatile uint32_t can2_tx_dropped;
+  volatile uint32_t can1_tx_queued_count;
+  volatile uint32_t can2_tx_queued_count;
+  volatile uint32_t can1_tx_queue_peak;
+  volatile uint32_t can2_tx_queue_peak;
+  volatile uint32_t can1_rx_irq_count;
+  volatile uint32_t can2_rx_irq_count;
+  volatile uint32_t can1_rx_fifo_frames;
+  volatile uint32_t can2_rx_fifo_frames;
+  volatile uint32_t can1_rx_gap_count;
+  volatile uint32_t can2_rx_gap_count;
+  uint32_t          can1_last_error_tick;
+  uint32_t          can2_last_error_tick;
+  uint32_t          can1_last_busoff_tick;
+  uint32_t          can2_last_busoff_tick;
+  uint32_t          can1_last_rx_tick;
+  uint32_t          can2_last_rx_tick;
+  uint32_t          can1_last_gap_tick;
+  uint32_t          can2_last_gap_tick;
+  uint32_t          can1_error_flags_at_gap;
+  uint32_t          can2_error_flags_at_gap;
+
+  /* Bus management */
+  volatile uint8_t  can1_busoff_pending;  /* set in IRQ, cleared by manager */
+  volatile uint8_t  can2_busoff_pending;
+  uint32_t          can1_busoff_count;    /* total bus-off events on CAN1   */
+  uint32_t          can2_busoff_count;    /* total bus-off events on CAN2   */
+  uint8_t           can1_sleeping;        /* 1 while CAN1 is in sleep mode  */
+  uint8_t           can2_sleeping;        /* 1 while CAN2 is in sleep mode  */
+
 #if APP_ENABLE_LIN_BUS
   uint32_t uart1_last_tx_time;
   uint32_t uart2_last_tx_time;
   uint8_t uart1_tx_pending_bytes;
   uint8_t uart2_tx_pending_bytes;
 #endif
+
 #if APP_ENABLE_MCP2515
   volatile uint32_t mcp2515_rx_count;
   volatile uint32_t mcp2515_tx_count;
+  uint32_t          mcp2515_busoff_count; /* total bus-off events on MCP2515 */
+  uint32_t          mcp2515_eflg;         /* last EFLG register snapshot     */
+  uint8_t           mcp2515_sleeping;     /* 1 while MCP2515 is in sleep mode */
 #endif
 } GatewayStateTypeDef;
 
 extern GatewayStateTypeDef g_gateway;
+extern char g_can1_error_text[160];
+extern char g_can2_error_text[160];
 
 /**
   * @brief Reset gateway state, queues, and counters.
@@ -70,13 +134,8 @@ void Gateway_Init(void);
 void Gateway_Process(void);
 
 /**
-  * @brief Developer CAN processing hook.
-  * @note Default implementation is empty.
-  * @note Override in another C file if you want your own logic.
-  * @note Typical usage:
-  *       GatewayCanFrame frame;
-  *       while (Gateway_CAN1_Read(&frame)) { modify frame; Gateway_CAN_Forward(&hcan2, &frame); }
-  *       while (Gateway_CAN2_Read(&frame)) { modify frame; Gateway_CAN_Forward(&hcan1, &frame); }
+  * @brief Internal CAN dispatch entry used by Gateway_Process().
+  * @note This drains pending bxCAN RX FIFOs and passes frames to App_HandleFrame().
   */
 void Gateway_ProcessCanBus(void);
 
@@ -89,11 +148,8 @@ void Gateway_ProcessCanBus(void);
 void Gateway_ProcessLinBus(void);
 
 /**
-  * @brief Developer SPI CAN processing hook for MCP2515.
-  * @note Default implementation is empty.
-  * @note Typical usage:
-  *       mcp2515_frame_t frame;
-  *       while (Gateway_MCP2515_Read(&frame)) { modify frame; Gateway_MCP2515_ForwardToCAN(&hcan1, &frame); }
+  * @brief Internal MCP2515 dispatch entry used by Gateway_Process().
+  * @note This drains pending MCP2515 RX frames and passes them to App_HandleFrame().
   */
 void Gateway_ProcessSpiCanBus(void);
 
@@ -145,6 +201,20 @@ uint8_t Gateway_CAN_Send(CAN_HandleTypeDef *to, const GatewayCanFrame *frame);
 uint8_t Gateway_CAN_Forward(CAN_HandleTypeDef *to, const GatewayCanFrame *frame);
 
 /**
+  * @brief Route a frame to a logical bus owned by the transport layer.
+  * @param to_bus Destination bus identifier.
+  * @param frame Frame to send.
+  * @retval 1 on successful submission, 0 on failure.
+  */
+uint8_t Gateway_SendToBus(GatewayBus to_bus, const GatewayCanFrame *frame);
+
+/**
+  * @brief Return the current HAL tick count for app-layer timing.
+  * @retval Tick value from HAL_GetTick().
+  */
+uint32_t Gateway_GetTick(void);
+
+/**
   * @brief Service queued CAN transmissions.
   * @note Usually you do not call this directly because Gateway_Process() already does.
   * @note Useful if your application wants tighter control over TX scheduling.
@@ -157,6 +227,28 @@ void Gateway_CAN_Service(void);
   * @note IRQ handlers already call this automatically on RX/TX activity.
   */
 void Gateway_UpdateCANActivity(uint8_t can_id);
+
+/**
+  * @brief Periodic bus health manager — call from Gateway_Process().
+  * @note Handles bxCAN bus-off recovery (re-arms notifications after hardware
+  *       AutoBusOff recovery), MCP2515 bus-off re-init, and optional idle sleep.
+  */
+void Gateway_CAN_BusManagement(void);
+
+/**
+  * @brief Put a bxCAN controller into sleep mode.
+  * @param can_id Use 1 for CAN1 or 2 for CAN2.
+  * @note With AutoWakeUp=ENABLE the hardware wakes automatically on bus activity.
+  *       Call Gateway_CAN_Wake() explicitly if AutoWakeUp=DISABLE.
+  */
+void Gateway_CAN_Sleep(uint8_t can_id);
+
+/**
+  * @brief Wake a bxCAN controller from sleep.
+  * @param can_id Use 1 for CAN1 or 2 for CAN2.
+  * @note No-op if the bus is already active.
+  */
+void Gateway_CAN_Wake(uint8_t can_id);
 
 /**
   * @brief Initialize optional LIN helpers.
@@ -256,7 +348,29 @@ uint8_t Gateway_MCP2515_ForwardToCAN(CAN_HandleTypeDef *to, const mcp2515_frame_
   * @retval 1 on success, 0 on failure.
   */
 uint8_t Gateway_CAN_ForwardToMCP2515(const GatewayCanFrame *frame);
+
+/**
+  * @brief Put the MCP2515 into sleep mode to save power.
+  * @note The chip can wake on CAN bus activity if WAKFIL is set in CNF3.
+  *       Call Gateway_MCP2515_Wake() to fully re-initialise after waking.
+  */
+void Gateway_MCP2515_Sleep(void);
+
+/**
+  * @brief Wake and fully re-initialise the MCP2515.
+  * @param bitrate Bitrate to configure after wake (use same value as init).
+  * @retval 1 on success, 0 if mcp2515_init() fails.
+  */
+uint8_t Gateway_MCP2515_Wake(mcp2515_bitrate_t bitrate);
 #endif
+
+/**
+  * @brief Initialize MCP2515 if the feature is enabled in main.h.
+  * @retval 1 when MCP2515 is disabled or init succeeds, 0 on init failure.
+  * @note Use this from generated startup code to avoid MCP2515-specific
+  *       preprocessor directives in CubeMX-owned files.
+  */
+uint8_t Gateway_InitOptionalMCP2515(void);
 
 #ifdef __cplusplus
 }

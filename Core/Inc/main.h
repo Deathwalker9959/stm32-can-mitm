@@ -59,8 +59,14 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 
 /* USER CODE BEGIN Private defines */
+#define APP_ENABLE_CAN1    1U
+#define APP_ENABLE_CAN2    1U
+#define APP_CAN2_BENCH_TEST 0U
 #define APP_ENABLE_LIN_BUS 0U
 /* Set to 1U to enable the optional LIN bus scheduler and helper library. */
+
+#define MCP2515_CS_Pin     GPIO_PIN_6
+/* PA6 = MCP2515 /CS (PA4 is the NMOS valve gate, NOT the chip-select). */
 
 #define APP_ENABLE_MCP2515 0U
 /* Set to 1U when SPI1 is connected to an MCP2515 CAN controller. */

@@ -1,3 +1,4 @@
+#include "main.h"     /* provides MCP2515_CS_Pin = GPIO_PIN_6 override */
 #include "mcp2515.h"
 
 #include <string.h>
@@ -76,13 +77,42 @@ typedef struct
     uint8_t cnf3;
 } mcp2515_bittiming_t;
 
+/*
+ * Bit-timing tables — select with MCP2515_OSC_FREQ_HZ in mcp2515.h.
+ *
+ * 8 MHz crystal  (cheap breakout boards, crystal marked "8.000"):
+ *   BRP+1 = prescaler.  500 kbps needs BRP=0 → 16 TQ → 8M/(2×1×16)=250k? No:
+ *   formula: baud = F_OSC / (2 × (BRP+1) × N_TQ)
+ *   125k: BRP=3 → 8M/(2×4×8TQ) — use BRP=1,16TQ → 8M/(2×2×16)=125k ✓
+ *   250k: BRP=0, 16TQ → 8M/(2×1×16)=250k ✓
+ *   500k: BRP=0,  8TQ → 8M/(2×1× 8)=500k ✓  CNF2: BTLMODE=1,PHSEG1=2,PRSEG=1→0x91, CNF3: PHSEG2=1→0x01
+ *   1M:   BRP=0,  4TQ → 8M/(2×1× 4)=1M  ✓  CNF2: BTLMODE=1,PHSEG1=1,PRSEG=0→0x89, CNF3: PHSEG2=0→0x00
+ *
+ * 16 MHz crystal (modules marked "16.000"):
+ *   125k: BRP=3,16TQ → 16M/(2×4×16)=125k ✓
+ *   250k: BRP=1,16TQ → 16M/(2×2×16)=250k ✓
+ *   500k: BRP=0,16TQ → 16M/(2×1×16)=500k ✓
+ *   1M:   BRP=0, 8TQ → 16M/(2×1× 8)=1M  ✓
+ */
+#if MCP2515_OSC_FREQ_HZ == 8000000UL
 static const mcp2515_bittiming_t mcp2515_bittiming_table[] =
 {
-    {0x03U, 0xB3U, 0x03U}, /* 125 kbps, 16 TQ, sample point 75.0% */
-    {0x01U, 0xB3U, 0x03U}, /* 250 kbps, 16 TQ, sample point 75.0% */
-    {0x00U, 0xB3U, 0x03U}, /* 500 kbps, 16 TQ, sample point 75.0% */
-    {0x00U, 0x98U, 0x01U}  /* 1 Mbps,   8 TQ, sample point 75.0% */
+    {0x01U, 0xB1U, 0x85U}, /* 125 kbps, 16 TQ, BRP=1, sample point 75% */
+    {0x00U, 0xB1U, 0x85U}, /* 250 kbps, 16 TQ, BRP=0, sample point 75% */
+    {0x00U, 0x90U, 0x82U}, /* 500 kbps,  8 TQ, BRP=0, sample point 75% */
+    {0x00U, 0x80U, 0x80U}  /* 1 Mbps,    4 TQ, BRP=0, sample point 75% */
 };
+#elif MCP2515_OSC_FREQ_HZ == 16000000UL
+static const mcp2515_bittiming_t mcp2515_bittiming_table[] =
+{
+    {0x03U, 0xB3U, 0x03U}, /* 125 kbps, 16 TQ, BRP=3, sample point 75% */
+    {0x01U, 0xB3U, 0x03U}, /* 250 kbps, 16 TQ, BRP=1, sample point 75% */
+    {0x00U, 0xB3U, 0x03U}, /* 500 kbps, 16 TQ, BRP=0, sample point 75% */
+    {0x00U, 0x98U, 0x01U}  /* 1 Mbps,    8 TQ, BRP=0, sample point 75% */
+};
+#else
+#error "MCP2515_OSC_FREQ_HZ must be 8000000UL or 16000000UL"
+#endif
 
 static const uint8_t mcp2515_load_txb_cmd[3] =
 {
@@ -230,12 +260,14 @@ bool mcp2515_reset(void)
     uint8_t tx_byte[1] = {MCP2515_CMD_RESET};
     uint8_t rx_byte[1] = {0U};
 
+    mcp2515_deselect(); /* ensure CS is deasserted before the transaction */
+
     if (mcp2515_spi_txrx(tx_byte, rx_byte, sizeof(tx_byte)) != MCP2515_OK)
     {
         return false;
     }
 
-    HAL_Delay(1U);
+    HAL_Delay(10U); /* 10 ms — crystal oscillator startup + chip self-init */
     return true;
 }
 
@@ -554,7 +586,7 @@ static mcp2515_result_t mcp2515_spi_transfer_internal(const uint8_t *tx_data, ui
     return mcp2515_spi_txrx(tx_data, rx_data, length);
 }
 
-static bool mcp2515_read_registers(uint8_t address, uint8_t *data, uint8_t length)
+static __attribute__((unused)) bool mcp2515_read_registers(uint8_t address, uint8_t *data, uint8_t length)
 {
     uint16_t transfer_length;
 

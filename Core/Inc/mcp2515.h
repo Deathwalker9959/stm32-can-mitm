@@ -30,11 +30,22 @@ extern "C" {
 #endif
 
 #ifndef MCP2515_DMA_MIN_BYTES
-#define MCP2515_DMA_MIN_BYTES 4U
+/* Set above MCP2515_MAX_SPI_XFER (16) to force all transfers through
+ * blocking HAL_SPI_TransmitReceive — same approach as the reference library.
+ * DMA can be re-enabled later once the baseline is confirmed working. */
+#define MCP2515_DMA_MIN_BYTES 255U
 #endif
 
 #ifndef MCP2515_SPI_HANDLE
 #define MCP2515_SPI_HANDLE hspi1
+#endif
+
+/* Crystal / oscillator frequency in Hz.
+ * Common values: 8000000 (cheap modules, crystal marked "8.000")
+ *                16000000 (modules marked "16.000" or "16MHz")
+ * This drives the bit-timing table selection in mcp2515.c. */
+#ifndef MCP2515_OSC_FREQ_HZ
+#define MCP2515_OSC_FREQ_HZ 8000000UL
 #endif
 
 typedef enum
