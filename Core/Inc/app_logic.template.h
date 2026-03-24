@@ -13,8 +13,10 @@ extern "C" {
  *
  * The gateway transport owns hardware RX/TX and calls:
  *   - App_Logic_Init() once during Gateway_Init()
- *   - App_HandleFrame() for every received CAN/MCP2515 frame
+ *   - App_HandleFrame() for every received bxCAN or auxiliary CAN frame
  *   - App_Logic_Process() once per main-loop Gateway_Process()
+ *   - App_ProcessLinBus() when LIN support is enabled and the app wants to
+ *     inspect or bridge raw LIN frames using Gateway_LIN_* helpers
  */
 
 #ifdef __cplusplus

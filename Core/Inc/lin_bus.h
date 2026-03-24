@@ -54,6 +54,24 @@ typedef enum {
 } LIN_ChecksumTypeDef;
 
 /**
+ * @brief Per-bus LIN validation policy.
+ *
+ * Typical use:
+ *   LIN_ValidationConfigTypeDef cfg = {
+ *       .validate_pid_parity = 1U,
+ *       .validate_checksum = 1U,
+ *       .checksum_type = LIN_CHECKSUM_ENHANCED,
+ *   };
+ *   LIN_Init(&hlin1, &huart1);
+ *   LIN_SetValidationConfig(&hlin1, &cfg);
+ */
+typedef struct {
+    uint8_t validate_pid_parity;        // 1 = validate PID parity when present
+    uint8_t validate_checksum;          // 1 = validate checksum on received frames
+    LIN_ChecksumTypeDef checksum_type;  // expected checksum type for received frames
+} LIN_ValidationConfigTypeDef;
+
+/**
  * @brief LIN bus state machine
  */
 typedef enum {
@@ -82,6 +100,7 @@ typedef struct {
 typedef struct {
     UART_HandleTypeDef *huart;          // UART handle
     LIN_StateTypeDef state;             // Current state
+    LIN_ValidationConfigTypeDef validation;
     uint8_t rx_buffer[LIN_RX_BUFFER_SIZE];  // RX DMA buffer
     uint16_t rx_length;                 // Received bytes count
     uint8_t tx_echo_count;              // Number of transmitted bytes to skip
@@ -124,6 +143,20 @@ uint8_t LIN_CalculateChecksum(uint8_t pid, uint8_t *data, uint8_t size, LIN_Chec
  * @retval LIN_StatusTypeDef
  */
 LIN_StatusTypeDef LIN_Init(LIN_HandleTypeDef *hlin, UART_HandleTypeDef *huart);
+
+/**
+ * @brief Override the validation policy for one LIN bus handle.
+ * @param hlin Pointer to LIN handle.
+ * @param config Validation policy to copy into the handle.
+ */
+void LIN_SetValidationConfig(LIN_HandleTypeDef *hlin, const LIN_ValidationConfigTypeDef *config);
+
+/**
+ * @brief Read back the active validation policy for one LIN bus handle.
+ * @param hlin Pointer to LIN handle.
+ * @param config Output policy snapshot.
+ */
+void LIN_GetValidationConfig(const LIN_HandleTypeDef *hlin, LIN_ValidationConfigTypeDef *config);
 
 /**
  * @brief Send complete LIN frame (master transmits header + data)

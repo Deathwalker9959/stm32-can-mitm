@@ -43,6 +43,7 @@ LIN_HandleTypeDef hlin2 __attribute__((aligned(4))) = {0};  // LIN handle for US
 /* Private function prototypes -----------------------------------------------*/
 static void LIN_ResetState(LIN_HandleTypeDef *hlin);
 static LIN_StatusTypeDef LIN_StartReception(LIN_HandleTypeDef *hlin);
+static uint8_t LIN_ValidatePIDParity(uint8_t pid);
 
 /* Public functions ----------------------------------------------------------*/
 
@@ -115,8 +116,27 @@ LIN_StatusTypeDef LIN_Init(LIN_HandleTypeDef *hlin, UART_HandleTypeDef *huart)
     memset(hlin, 0, sizeof(LIN_HandleTypeDef));
     hlin->huart = huart;
     hlin->state = LIN_STATE_IDLE;
+    hlin->validation.validate_pid_parity = 1U;
+    hlin->validation.validate_checksum = 1U;
+    hlin->validation.checksum_type = LIN_CHECKSUM_ENHANCED;
 
     return LIN_OK;
+}
+
+void LIN_SetValidationConfig(LIN_HandleTypeDef *hlin, const LIN_ValidationConfigTypeDef *config)
+{
+    if ((hlin == NULL) || (config == NULL))
+        return;
+
+    hlin->validation = *config;
+}
+
+void LIN_GetValidationConfig(const LIN_HandleTypeDef *hlin, LIN_ValidationConfigTypeDef *config)
+{
+    if ((hlin == NULL) || (config == NULL))
+        return;
+
+    *config = hlin->validation;
 }
 
 /**
@@ -296,6 +316,8 @@ LIN_StatusTypeDef LIN_ProcessReceivedFrame(LIN_HandleTypeDef *hlin, LIN_FrameTyp
 
     // OPTIMIZED: Fast sync detection (check likely positions first)
     uint8_t skip_bytes = 0;
+    uint8_t received_pid = 0U;
+    uint8_t received_pid_valid = 0U;
 
     // Most common: Break captured at position 0, sync at position 1
     if (hlin->rx_length >= 2 && hlin->rx_buffer[1] == LIN_SYNC_BYTE)
@@ -306,6 +328,11 @@ LIN_StatusTypeDef LIN_ProcessReceivedFrame(LIN_HandleTypeDef *hlin, LIN_FrameTyp
             uint8_t next_byte = hlin->rx_buffer[2];
             // Skip break + sync + (PID or ID)
             skip_bytes = (next_byte == hlin->current_pid || next_byte == (hlin->current_pid & 0x3F)) ? 3 : 2;
+            if (skip_bytes == 3U)
+            {
+                received_pid = next_byte;
+                received_pid_valid = 1U;
+            }
         }
         else
         {
@@ -320,6 +347,11 @@ LIN_StatusTypeDef LIN_ProcessReceivedFrame(LIN_HandleTypeDef *hlin, LIN_FrameTyp
             uint8_t next_byte = hlin->rx_buffer[1];
             // Skip sync + (PID or ID)
             skip_bytes = (next_byte == hlin->current_pid || next_byte == (hlin->current_pid & 0x3F)) ? 2 : 1;
+            if (skip_bytes == 2U)
+            {
+                received_pid = next_byte;
+                received_pid_valid = 1U;
+            }
         }
         else
         {
@@ -330,6 +362,11 @@ LIN_StatusTypeDef LIN_ProcessReceivedFrame(LIN_HandleTypeDef *hlin, LIN_FrameTyp
     else if (hlin->rx_length >= 3 && hlin->rx_buffer[2] == LIN_SYNC_BYTE)
     {
         skip_bytes = 3;
+        if (hlin->rx_length >= 4)
+        {
+            received_pid = hlin->rx_buffer[3];
+            received_pid_valid = 1U;
+        }
     }
     else
     {
@@ -359,46 +396,39 @@ LIN_StatusTypeDef LIN_ProcessReceivedFrame(LIN_HandleTypeDef *hlin, LIN_FrameTyp
         return LIN_ERROR;
     }
 
+    if ((hlin->validation.validate_pid_parity != 0U) &&
+        (received_pid_valid != 0U) &&
+        (LIN_ValidatePIDParity(received_pid) == 0U))
+    {
+        hlin->error_count++;
+        LIN_ResetState(hlin);
+        return LIN_ERROR;
+    }
+
     // Extract received checksum
     uint8_t received_checksum = hlin->rx_buffer[hlin->rx_length - 1];
 
-    // OPTIMIZED: Try most likely checksum first (ID-only based on your slave)
-    uint8_t id_only = hlin->current_pid & 0x3F;
-    uint8_t calc_checksum;
-
-    // Try ID-only first (your slave uses this - fastest path)
-    calc_checksum = LIN_CalculateChecksum(id_only, data_start, data_length, LIN_CHECKSUM_ENHANCED);
-    if (received_checksum == calc_checksum)
+    if (hlin->validation.validate_checksum != 0U)
     {
-        goto checksum_ok;  // Fast exit
+        uint8_t checksum_pid = (received_pid_valid != 0U) ? received_pid : hlin->current_pid;
+        uint8_t calc_checksum = LIN_CalculateChecksum(checksum_pid,
+                                                      data_start,
+                                                      data_length,
+                                                      hlin->validation.checksum_type);
+
+        if (received_checksum != calc_checksum)
+        {
+            hlin->error_count++;
+            LIN_ResetState(hlin);
+            return LIN_CHECKSUM_ERROR;
+        }
     }
-
-    // Try full PID (LIN 2.x standard)
-    calc_checksum = LIN_CalculateChecksum(hlin->current_pid, data_start, data_length, LIN_CHECKSUM_ENHANCED);
-    if (received_checksum == calc_checksum)
-    {
-        goto checksum_ok;  // Fast exit
-    }
-
-    // Try classic (data only)
-    calc_checksum = LIN_CalculateChecksum(0, data_start, data_length, LIN_CHECKSUM_CLASSIC);
-    if (received_checksum == calc_checksum)
-    {
-        goto checksum_ok;  // Fast exit
-    }
-
-    // All methods failed
-    hlin->error_count++;
-    LIN_ResetState(hlin);
-    return LIN_CHECKSUM_ERROR;
-
-checksum_ok:
 
     // Fill frame structure
     frame->id = hlin->current_pid & 0x3F;  // Extract ID from PID
     frame->length = data_length;
     memcpy(frame->data, data_start, data_length);
-    frame->checksum_type = LIN_CHECKSUM_ENHANCED;
+    frame->checksum_type = hlin->validation.checksum_type;
     frame->timestamp = HAL_GetTick();
 
     // Update statistics
@@ -530,4 +560,10 @@ static LIN_StatusTypeDef LIN_StartReception(LIN_HandleTypeDef *hlin)
     }
 
     return LIN_OK;
+}
+
+static uint8_t LIN_ValidatePIDParity(uint8_t pid)
+{
+    uint8_t recalculated_pid = LIN_CalculatePID(pid & 0x3FU);
+    return (recalculated_pid == pid) ? 1U : 0U;
 }

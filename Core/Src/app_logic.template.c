@@ -10,6 +10,8 @@
  *   - modify or drop GatewayCanFrame values
  *   - forward with Gateway_SendToBus(GATEWAY_BUS_CAN1/2/3, ...)
  *   - use Gateway_GetTick() for debounce/timers
+ *   - implement App_ProcessLinBus() if the project enables APP_ENABLE_LIN_BUS
+ *     and wants to consume or forward raw LIN frames through Gateway_LIN_* APIs
  */
 
 void App_Logic_Init(void)
@@ -41,8 +43,31 @@ void App_HandleFrame(const AppFrameContext *ctx, const GatewayCanFrame *frame)
       (void)Gateway_SendToBus(GATEWAY_BUS_CAN1, &tx_frame);
       break;
 
-    case GATEWAY_BUS_CAN3:
+    case GATEWAY_BUS_AUX:
     default:
       break;
   }
+}
+
+void App_ProcessLinBus(void)
+{
+  /*
+   * Example:
+   *
+   * if (Gateway_LIN_FramePending(1U) != 0U)
+   * {
+   *   uint8_t *buf = Gateway_LIN_GetRxBuffer(1U);
+   *   uint16_t len = Gateway_LIN_GetRxLength(1U);
+   *
+   *   (void)buf;
+   *   (void)len;
+   *
+   *   Gateway_LIN_Consume(1U);
+   * }
+   *
+   * if (Gateway_LIN_FramePending(2U) != 0U)
+   * {
+   *   (void)Gateway_LIN_Forward(2U);
+   * }
+   */
 }

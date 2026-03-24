@@ -16,6 +16,7 @@ typedef struct
 void App_Logic_Init(void);
 void App_Logic_Process(void);
 void App_HandleFrame(const AppFrameContext *ctx, const GatewayCanFrame *frame);
+void App_ProcessLinBus(void);
 
 #ifdef __cplusplus
 }

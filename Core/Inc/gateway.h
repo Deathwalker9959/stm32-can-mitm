@@ -20,10 +20,10 @@ extern "C" {
 #define CAN2_FILTER_BANK_START 14U
 #define ECHO_IGNORE_WINDOW_MS 4U
 
-/* Bus roles:
- * - CAN1: ctrl_c/debugger side into the gateway
- * - CAN2: gateway out to the vehicle/control-module side as the MITM path
- * - CAN3/MCP2515: CAN_HMI accessor used for ESP-frame snooping/injection only */
+/* Built-in transport IDs:
+ * - CAN1: standard bxCAN controller 1 on the STM32
+ * - CAN2: standard bxCAN controller 2 on the STM32
+ * - AUX: optional external CAN controller such as MCP2515 */
 
 /* Bus-off events increment the busoff_count counters, then notifications
  * are re-armed.  Hardware auto-recovery is handled by AutoBusOff=ENABLE. */
@@ -36,12 +36,11 @@ extern "C" {
 /* How often (ms) the MCP2515 EFLG register is polled for bus-off/errors. */
 #define GATEWAY_MCP2515_CHECK_MS     100U
 
-typedef enum
-{
-  GATEWAY_BUS_CAN1 = 0,
-  GATEWAY_BUS_CAN2,
-  GATEWAY_BUS_CAN3
-} GatewayBus;
+typedef uint8_t GatewayBus;
+
+#define GATEWAY_BUS_CAN1  ((GatewayBus)1U)
+#define GATEWAY_BUS_CAN2  ((GatewayBus)2U)
+#define GATEWAY_BUS_AUX   ((GatewayBus)3U)
 
 typedef struct
 {

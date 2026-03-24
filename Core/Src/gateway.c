@@ -108,15 +108,7 @@ void Gateway_ProcessCanBus(void)
 
 __weak void Gateway_ProcessLinBus(void)
 {
-  /*
-   * Example:
-   * if (Gateway_LIN_FramePending(1U)) {
-   *   uint8_t *buf = Gateway_LIN_GetRxBuffer(1U);
-   *   uint16_t len = Gateway_LIN_GetRxLength(1U);
-   *   inspect buf/len here;
-   *   Gateway_LIN_Consume(1U);
-   * }
-   */
+  App_ProcessLinBus();
 }
 
 void Gateway_ProcessSpiCanBus(void)
@@ -142,7 +134,7 @@ void Gateway_ProcessSpiCanBus(void)
     }
 
     memcpy(can_frame.data, mcp_frame.data, can_frame.header.DLC);
-    Gateway_DispatchFrame(GATEWAY_BUS_CAN3, &can_frame);
+    Gateway_DispatchFrame(GATEWAY_BUS_AUX, &can_frame);
   }
 #endif
 }
@@ -325,7 +317,7 @@ uint8_t Gateway_SendToBus(GatewayBus to_bus, const GatewayCanFrame *frame)
       return 0U;
 #endif
 
-    case GATEWAY_BUS_CAN3:
+    case GATEWAY_BUS_AUX:
 #if APP_ENABLE_MCP2515
       return Gateway_CAN_ForwardToMCP2515(frame);
 #else

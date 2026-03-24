@@ -25,8 +25,12 @@ void App_HandleFrame(const AppFrameContext *ctx, const GatewayCanFrame *frame)
       (void)Gateway_SendToBus(GATEWAY_BUS_CAN1, frame);
       break;
 
-    case GATEWAY_BUS_CAN3:
+    case GATEWAY_BUS_AUX:
     default:
       break;
   }
+}
+
+void App_ProcessLinBus(void)
+{
 }
